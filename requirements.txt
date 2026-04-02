@@ -1,0 +1,24 @@
+# Python dependencies for local development and testing
+# Databricks runtime provides PySpark — do not install pyspark in the cluster requirements.txt
+
+# Core data libraries
+pyspark==3.5.0          # Match your Databricks Runtime version (e.g. DBR 14.x uses Spark 3.5)
+delta-spark==3.1.0      # Delta Lake — must match Spark version
+
+# Databricks SDK (for local job/task orchestration scripts)
+databricks-sdk==0.25.0
+
+# Azure Storage
+azure-storage-file-datalake==12.15.0
+azure-identity==1.16.0
+
+# Utilities
+python-dotenv==1.0.1    # Load .env for local credential management
+
+# Testing
+pytest==8.2.0
+pytest-mock==3.14.0
+
+# Linting / formatting
+black==24.4.2
+flake8==7.0.0
