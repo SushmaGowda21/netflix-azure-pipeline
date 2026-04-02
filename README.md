@@ -116,15 +116,4 @@ CREATE SCHEMA IF NOT EXISTS netflix_catalog.net_schema;
 
 ---
 
-## Changelog
-
-### Bug Fixes Applied
-
-| # | File | Fix |
-|---|---|---|
-| 1 | `gold_pipeline.py` | Removed duplicate `@dlt.table` definition for `gold_stg_netflixtitles` |
-| 2 | `gold_pipeline.py` | Renamed all `myfunc()` loader functions to descriptive names: `load_directors`, `load_cast`, `load_category`, `load_title` |
-| 3 | `silver_transformation.py` | Fixed SQL query from `global_temp.global_view` → `global_temp.titles_global` to match the registered view name |
-
----
 
