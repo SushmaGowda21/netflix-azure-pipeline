@@ -1,6 +1,6 @@
-# Netflix Data Pipeline — Azure Databricks & ADF
+# Netflix Data Pipeline — Azure Databricks, FastAPI & Docker
 
-A medallion-architecture (Raw → Bronze → Silver → Gold) data pipeline for Netflix datasets, built on Azure Data Factory, Azure Data Lake Storage Gen2, and Databricks Unity Catalog with Delta Live Tables.
+A medallion-architecture (Raw → Bronze → Silver → Gold) data pipeline for Netflix datasets, built on Azure Data Factory, Azure Data Lake Storage Gen2, and Databricks Unity Catalog with Delta Live Tables — and rebuilt locally with Python, FastAPI, and Docker.
 
 ---
 
@@ -8,20 +8,40 @@ A medallion-architecture (Raw → Bronze → Silver → Gold) data pipeline for 
 
 ```
 .
-├── bronze_autoloader.py        # Autoloader streaming ingest: Raw → Bronze
-├── silver_lookup_transfer.py   # Parameterised batch copy: Bronze → Silver (lookup tables)
-├── silver_transformation.py    # Transformations on netflix_titles: Bronze → Silver
-├── gold_pipeline.py            # Delta Live Tables (DLT) pipeline: Silver → Gold
-├── lookup_logic.py             # Job utility — defines the source/target folder array
-├── lookup_enrichment.py        # Job utility — reads weekday widget, sets task value
-├── if_workday_logic.py         # Conditional task — checks weekday task value
-├── README.md
-└── requirements.txt
+├── src/                             # Original Azure Databricks notebooks
+│   ├── bronze_autoloader.py         # Autoloader streaming ingest: Raw → Bronze
+│   ├── silver_lookup_transfer.py    # Parameterised batch copy: Bronze → Silver (lookup tables)
+│   ├── silver_transformation.py     # Transformations on netflix_titles: Bronze → Silver
+│   └── gold_pipeline.py             # Delta Live Tables (DLT) pipeline: Silver → Gold
+│
+├── notebooks/                       # Databricks job utility notebooks
+│   ├── lookup_logic.py              # Job utility — defines the source/target folder array
+│   ├── lookup_enrichment.py         # Job utility — reads weekday widget, sets task value
+│   └── if_workday_logic.py          # Conditional task — checks weekday task value
+│
+├── data/
+│   ├── raw/                         # Raw CSV files (not pushed to Git)
+│   ├── bronze/                      # Bronze Parquet files (not pushed to Git)
+│   ├── silver/                      # Silver Parquet files (not pushed to Git)
+│   └── gold/                        # Gold Parquet files — API reads from here
+│
+├── bronze_layer.py                  # Local Bronze layer — CSV → Parquet
+├── silver_layer.py                  # Local Silver layer — cleaning & transformation
+├── gold_layer.py                    # Local Gold layer — quality rules & final tables
+├── main.py                          # FastAPI REST API — serves Gold layer data
+├── dockerfile                       # Docker image definition
+├── requirements.txt                 # Azure/Databricks dependencies
+├── requirements-local.txt           # Local + FastAPI + Docker dependencies
+├── .env.example                     # Environment variable template
+├── .gitignore
+└── README.md
 ```
 
 ---
 
 ## Architecture Overview
+
+### Azure (Original)
 
 ```
 ADLS Gen2 containers
@@ -44,9 +64,157 @@ Databricks (Unity Catalog + DLT)
         └── Gold DLT pipeline (expect_all_or_drop quality rules)
 ```
 
+### Local (Rebuilt — No Azure Cost)
+
+```
+Raw CSV files (data/raw/)
+      ↓
+🥉 Bronze Layer  →  bronze_layer.py  →  data/bronze/ (Parquet)
+      ↓
+🥈 Silver Layer  →  silver_layer.py  →  data/silver/ (Parquet, cleaned)
+      ↓
+🥇 Gold Layer    →  gold_layer.py    →  data/gold/   (Parquet, quality rules)
+      ↓
+⚡ FastAPI        →  main.py          →  localhost:8000
+      ↓
+🐳 Docker         →  dockerfile       →  runs anywhere!
+```
+
 ---
 
-## Prerequisites
+## Local Setup — Run Without Azure
+
+### Prerequisites
+- Python 3.11+
+- Docker Desktop
+
+### Step 1 — Clone and Setup
+
+```bash
+git clone https://github.com/SushmaGowda21/netflix-azure-pipeline.git
+cd netflix-azure-pipeline
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements-local.txt
+```
+
+### Step 2 — Add Raw Data
+
+Download the Netflix CSV files and place them in `data/raw/`:
+- `netflix_titles.csv`
+- `netflix_cast.csv`
+- `netflix_category.csv`
+- `netflix_countries.csv`
+- `netflix_directors.csv`
+
+### Step 3 — Run the Pipeline
+
+```bash
+python bronze_layer.py
+python silver_layer.py
+python gold_layer.py
+```
+
+### Step 4 — Run FastAPI
+
+```bash
+uvicorn main:app --reload
+```
+
+API at: `http://localhost:8000`
+Swagger UI at: `http://localhost:8000/docs`
+
+---
+
+## REST API Endpoints
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/` | Welcome message |
+| GET | `/titles` | All Netflix titles |
+| GET | `/titles/search?q=batman` | Search titles by name |
+| GET | `/titles/filter/type?type=Movie` | Filter by type |
+| GET | `/titles/filter/rating?rating=R` | Filter by rating |
+| GET | `/titles/filter/year?year=2020` | Filter by release year |
+| GET | `/titles/{show_id}` | Get one title by ID |
+| GET | `/cast` | All cast members |
+| GET | `/directors` | All directors |
+| GET | `/directors/search?name=Nolan` | Search directors by name |
+| GET | `/category` | All categories |
+| GET | `/countries` | All countries |
+| POST | `/titles` | Add a new title |
+
+### POST /titles — Example
+
+```json
+{
+    "show_id": "s9998",
+    "type": "Movie",
+    "title": "Saptha Sagaradache Yello",
+    "release_year": 2023,
+    "rating": "U/A",
+    "description": "A Kannada romantic drama directed by Rakshith Shetty"
+}
+```
+
+---
+
+## Docker
+
+### Build Image
+
+```bash
+docker build -t netflix-api .
+```
+
+### Run Container
+
+```bash
+docker run -p 8000:8000 netflix-api
+```
+
+API at: `http://localhost:8000`
+
+---
+
+## Silver Layer — Transformations
+
+| Transformation | Column | Details |
+|---|---|---|
+| Fill nulls | duration_minutes, duration_seasons | Replaced with 0 |
+| Type cast | duration_minutes, duration_seasons | Converted to Integer |
+| Short title | shorttitle | Extracted text before `:` in title |
+| Rating clean | rating | Extracted text before `-` in rating |
+| Type flag | type_flag | Movie=1, TV Show=2, else=0 |
+| Duration rank | duration_ranking | Dense rank by duration descending |
+
+---
+
+## Gold Layer — Quality Rules
+
+| Rule | Column | Action |
+|---|---|---|
+| show_id IS NOT NULL | show_id | Drop rows where null |
+| newflag IS NOT NULL | newflag | Drop rows where null |
+| newflag = 1 | newflag | Added as constant column |
+
+---
+
+## Gold Tables
+
+| Table | Rows | Description |
+|---|---|---|
+| gold_netflix_titles | 6,236 | Main Netflix titles |
+| gold_netflix_cast | 44,311 | Cast members per title |
+| gold_netflix_category | 13,670 | Categories per title |
+| gold_netflix_countries | 7,179 | Countries per title |
+| gold_netflix_directors | 4,852 | Directors per title |
+
+---
+
+## Azure Setup
+
+### Prerequisites
 
 See `requirements.txt` for Python dependencies. You also need:
 
@@ -54,10 +222,6 @@ See `requirements.txt` for Python dependencies. You also need:
 - Azure CLI or portal access
 - Databricks workspace (Premium tier for Unity Catalog)
 - A GitHub personal access token (if using private repos)
-
----
-
-## Setup Steps
 
 ### 1. Azure Resources
 
@@ -116,4 +280,12 @@ CREATE SCHEMA IF NOT EXISTS netflix_catalog.net_schema;
 
 ---
 
+## Changelog
 
+### Bug Fixes Applied (Azure Version)
+
+| # | File | Fix |
+|---|---|---|
+| 1 | `gold_pipeline.py` | Removed duplicate `@dlt.table` definition for `gold_stg_netflixtitles` |
+| 2 | `gold_pipeline.py` | Renamed all `myfunc()` loader functions to descriptive names: `load_directors`, `load_cast`, `load_category`, `load_title` |
+| 3 | `silver_transformation.py` | Fixed SQL query from `global_temp.global_view` → `global_temp.titles_global` to match the registered view name |
